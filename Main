@@ -1,0 +1,144 @@
+-- [[
+--   Standalone Ghost / Invisible Script (with Draggable Button & Highlight)
+--]]
+
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+
+local parentGui = (gethui and gethui()) or CoreGui
+
+-- Xóa GUI cũ nếu chạy lại script
+if _G.StandaloneGhostCleanup then
+    pcall(_G.StandaloneGhostCleanup)
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "StandaloneGhostGui"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.Parent = parentGui
+
+-- Nút nổi kéo thả
+local FloatBtn = Instance.new("TextButton")
+FloatBtn.Name = "GhostButton"
+FloatBtn.Parent = ScreenGui
+FloatBtn.Position = UDim2.new(0, 150, 0, 160)
+FloatBtn.Size = UDim2.fromOffset(56, 56)
+FloatBtn.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+FloatBtn.BackgroundTransparency = 0.15
+FloatBtn.Font = Enum.Font.GothamBold
+FloatBtn.Text = "👻"
+FloatBtn.TextSize = 22
+FloatBtn.TextColor3 = Color3.fromRGB(0, 229, 255)
+FloatBtn.AutoButtonColor = false
+FloatBtn.ZIndex = 30
+
+local UICorner = Instance.new("UICorner", FloatBtn)
+UICorner.CornerRadius = UDim.new(0, 16)
+
+local UIStroke = Instance.new("UIStroke", FloatBtn)
+UIStroke.Color = Color3.fromRGB(0, 229, 255)
+UIStroke.Thickness = 1.5
+
+-- Hàm kéo thả nút nổi
+local dragging, moved, startInput, startPos = false, false, nil, nil
+FloatBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        moved = false
+        startInput = input.Position
+        startPos = FloatBtn.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - startInput
+        if delta.Magnitude > 5 then moved = true end
+        if moved then
+            FloatBtn.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+        end
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+-- Xử lý logic tàng hình & Highlight
+local origTransparency = {}
+local highlightObj = nil
+local isGhostActive = true
+
+local function applyGhost()
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    -- Tạo hiệu ứng Highlight quanh người
+    if not highlightObj or highlightObj.Parent ~= char then
+        if highlightObj then pcall(function() highlightObj:Destroy() end) end
+        highlightObj = Instance.new("Highlight")
+        highlightObj.Name = "GhostHighlight"
+        highlightObj.Adornee = char
+        highlightObj.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlightObj.FillColor = Color3.fromRGB(0, 229, 255)
+        highlightObj.OutlineColor = Color3.fromRGB(170, 80, 255)
+        highlightObj.FillTransparency = 0.6
+        highlightObj.OutlineTransparency = 0
+        highlightObj.Parent = char
+    end
+
+    -- Ẩn các bộ phận cơ thể (Giữ nguyên HumanoidRootPart để không bị lỗi hitbox/rơi)
+    for _, d in ipairs(char:GetDescendants()) do
+        if (d:IsA("BasePart") or d:IsA("Decal") or d:IsA("Texture")) and d.Name ~= "HumanoidRootPart" then
+            if origTransparency[d] == nil then
+                origTransparency[d] = d.Transparency
+            end
+            d.Transparency = 1
+        end
+    end
+end
+
+local function restoreNormal()
+    if highlightObj then
+        pcall(function() highlightObj:Destroy() end)
+        highlightObj = nil
+    end
+    for d, orig in pairs(origTransparency) do
+        if d and d.Parent then
+            pcall(function() d.Transparency = orig end)
+        end
+    end
+    table.clear(origTransparency)
+end
+
+local hbConn = RunService.Heartbeat:Connect(function()
+    if isGhostActive then
+        applyGhost()
+    end
+end)
+
+-- Nhấn nút nổi để tắt tàng hình và xóa script
+FloatBtn.Activated:Connect(function()
+    if not moved then
+        isGhostActive = false
+        restoreNormal()
+        if ScreenGui then ScreenGui:Destroy() end
+        if hbConn then hbConn:Disconnect() end
+    end
+end)
+
+_G.StandaloneGhostCleanup = function()
+    isGhostActive = false
+    restoreNormal()
+    if ScreenGui then ScreenGui:Destroy() end
+    if hbConn then hbConn:Disconnect() end
+end
