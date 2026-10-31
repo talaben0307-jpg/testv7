@@ -1,22 +1,23 @@
 -- [[
---   Standalone Ghost / Invisible Script (with Draggable Button & Highlight)
+--   Standalone FE Invisible + Hitbox (Draggable Ghost UI)
 --]]
 
 local Players = game:GetService("Players")
-local CoreGui = game:GetService("CoreGui")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local LocalPlayer = Players.LocalPlayer
+local CoreGui = game:GetService("CoreGui")
+local Workspace = game:GetService("Workspace")
 
+local LocalPlayer = Players.LocalPlayer
 local parentGui = (gethui and gethui()) or CoreGui
 
--- Xóa GUI cũ nếu chạy lại script
-if _G.StandaloneGhostCleanup then
-    pcall(_G.StandaloneGhostCleanup)
+-- Dọn dẹp GUI cũ nếu chạy lại
+if _G.StandaloneFEGhostCleanup then
+    pcall(_G.StandaloneFEGhostCleanup)
 end
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "StandaloneGhostGui"
+ScreenGui.Name = "StandaloneFEGhostGui"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.Parent = parentGui
@@ -43,7 +44,7 @@ local UIStroke = Instance.new("UIStroke", FloatBtn)
 UIStroke.Color = Color3.fromRGB(0, 229, 255)
 UIStroke.Thickness = 1.5
 
--- Hàm kéo thả nút nổi
+-- Logic kéo thả
 local dragging, moved, startInput, startPos = false, false, nil, nil
 FloatBtn.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -73,72 +74,121 @@ UserInputService.InputEnded:Connect(function(input)
     end
 end)
 
--- Xử lý logic tàng hình & Highlight
-local origTransparency = {}
+-- Biến lưu trữ trạng thái FE Invisible
+local isGhostActive = false
+local RealChar, FakeChar = nil, nil
+local loopConn = nil
 local highlightObj = nil
-local isGhostActive = true
 
-local function applyGhost()
-    local char = LocalPlayer.Character
-    if not char then return end
-
-    -- Tạo hiệu ứng Highlight quanh người
-    if not highlightObj or highlightObj.Parent ~= char then
-        if highlightObj then pcall(function() highlightObj:Destroy() end) end
-        highlightObj = Instance.new("Highlight")
-        highlightObj.Name = "GhostHighlight"
-        highlightObj.Adornee = char
-        highlightObj.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-        highlightObj.FillColor = Color3.fromRGB(0, 229, 255)
-        highlightObj.OutlineColor = Color3.fromRGB(170, 80, 255)
-        highlightObj.FillTransparency = 0.6
-        highlightObj.OutlineTransparency = 0
-        highlightObj.Parent = char
+local function activateFEInvisible()
+    if isGhostActive or not LocalPlayer.Character then return end
+    isGhostActive = true
+    
+    RealChar = LocalPlayer.Character
+    RealChar.Archivable = true
+    
+    -- Tạo nhân vật giả (Clone) để máy chủ nhìn thấy
+    FakeChar = RealChar:Clone()
+    FakeChar.Parent = Workspace
+    
+    -- Xóa các script thừa trong FakeChar để không bị lỗi
+    for _, v in ipairs(FakeChar:GetDescendants()) do
+        if v:IsA("LocalScript") or v:IsA("Script") then
+            v:Destroy()
+        end
     end
-
-    -- Ẩn các bộ phận cơ thể (Giữ nguyên HumanoidRootPart để không bị lỗi hitbox/rơi)
-    for _, d in ipairs(char:GetDescendants()) do
-        if (d:IsA("BasePart") or d:IsA("Decal") or d:IsA("Texture")) and d.Name ~= "HumanoidRootPart" then
-            if origTransparency[d] == nil then
-                origTransparency[d] = d.Transparency
+    
+    -- Chuyển quyền điều khiển sang nhân vật giả
+    LocalPlayer.Character = FakeChar
+    Workspace.CurrentCamera.CameraSubject = FakeChar:FindFirstChild("Humanoid")
+    
+    -- Làm trong suốt nhân vật thật (RealChar) nhưng giữ lại Hitbox (HumanoidRootPart)
+    for _, v in ipairs(RealChar:GetDescendants()) do
+        if v:IsA("BasePart") or v:IsA("Decal") or v:IsA("Texture") then
+            if v.Name ~= "HumanoidRootPart" then
+                v.Transparency = 1
+                v.CanCollide = false
             end
-            d.Transparency = 1
         end
     end
+    
+    -- Tạo Highlight quanh nhân vật giả để bạn dễ nhìn
+    highlightObj = Instance.new("Highlight")
+    highlightObj.Name = "GhostHighlight"
+    highlightObj.Adornee = FakeChar
+    highlightObj.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlightObj.FillColor = Color3.fromRGB(0, 229, 255)
+    highlightObj.OutlineColor = Color3.fromRGB(170, 80, 255)
+    highlightObj.FillTransparency = 0.6
+    highlightObj.OutlineTransparency = 0
+    highlightObj.Parent = FakeChar
+    
+    -- Đồng bộ vị trí Hitbox (RealChar) đi theo FakeChar để bạn đánh được người khác
+    loopConn = RunService.Heartbeat:Connect(function()
+        if RealChar and FakeChar and RealChar:FindFirstChild("HumanoidRootPart") and FakeChar:FindFirstChild("HumanoidRootPart") then
+            -- Giữ Hitbox tàng hình luôn nằm ngay vị trí bạn điều khiển
+            RealChar.HumanoidRootPart.CFrame = FakeChar.HumanoidRootPart.CFrame
+            RealChar.HumanoidRootPart.Velocity = Vector3.zero
+        else
+            -- Nếu một trong 2 bị chết, reset lại
+            deactivateFEInvisible()
+        end
+    end)
+    
+    -- Đổi màu nút để báo hiệu đang tàng hình
+    UIStroke.Color = Color3.fromRGB(255, 70, 90)
+    FloatBtn.TextColor3 = Color3.fromRGB(255, 70, 90)
 end
 
-local function restoreNormal()
-    if highlightObj then
-        pcall(function() highlightObj:Destroy() end)
-        highlightObj = nil
-    end
-    for d, orig in pairs(origTransparency) do
-        if d and d.Parent then
-            pcall(function() d.Transparency = orig end)
+function deactivateFEInvisible()
+    if not isGhostActive then return end
+    isGhostActive = false
+    
+    if loopConn then loopConn:Disconnect() end
+    if highlightObj then highlightObj:Destroy() end
+    
+    -- Đưa người chơi về lại nhân vật thật và xóa nhân vật giả
+    if RealChar and RealChar.Parent then
+        LocalPlayer.Character = RealChar
+        Workspace.CurrentCamera.CameraSubject = RealChar:FindFirstChild("Humanoid")
+        
+        -- Hiện lại cơ thể
+        for _, v in ipairs(RealChar:GetDescendants()) do
+            if v:IsA("BasePart") or v:IsA("Decal") or v:IsA("Texture") then
+                if v.Name ~= "HumanoidRootPart" then
+                    v.Transparency = 0
+                    v.CanCollide = true
+                end
+            end
         end
     end
-    table.clear(origTransparency)
+    
+    if FakeChar then FakeChar:Destroy() end
+    
+    -- Phục hồi màu nút
+    UIStroke.Color = Color3.fromRGB(0, 229, 255)
+    FloatBtn.TextColor3 = Color3.fromRGB(0, 229, 255)
 end
 
-local hbConn = RunService.Heartbeat:Connect(function()
-    if isGhostActive then
-        applyGhost()
-    end
-end)
-
--- Nhấn nút nổi để tắt tàng hình và xóa script
+-- Nhấn vào nút nổi
 FloatBtn.Activated:Connect(function()
     if not moved then
-        isGhostActive = false
-        restoreNormal()
-        if ScreenGui then ScreenGui:Destroy() end
-        if hbConn then hbConn:Disconnect() end
+        if isGhostActive then
+            deactivateFEInvisible()
+        else
+            activateFEInvisible()
+        end
     end
 end)
 
-_G.StandaloneGhostCleanup = function()
-    isGhostActive = false
-    restoreNormal()
+-- Khi chết tự reset lại script
+LocalPlayer.CharacterAdded:Connect(function()
+    if isGhostActive then
+        deactivateFEInvisible()
+    end
+end)
+
+_G.StandaloneFEGhostCleanup = function()
+    deactivateFEInvisible()
     if ScreenGui then ScreenGui:Destroy() end
-    if hbConn then hbConn:Disconnect() end
 end
