@@ -1,5 +1,5 @@
 -- [[
---   Standalone FE Invisible + Hitbox (Draggable Ghost UI)
+--   Standalone FE Invisible + Hitbox (Fixed Camera & Clones)
 --]]
 
 local Players = game:GetService("Players")
@@ -11,7 +11,6 @@ local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 local parentGui = (gethui and gethui()) or CoreGui
 
--- Dọn dẹp GUI cũ nếu chạy lại
 if _G.StandaloneFEGhostCleanup then
     pcall(_G.StandaloneFEGhostCleanup)
 end
@@ -22,7 +21,7 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.Parent = parentGui
 
--- Nút nổi kéo thả
+-- Nút nổi
 local FloatBtn = Instance.new("TextButton")
 FloatBtn.Name = "GhostButton"
 FloatBtn.Parent = ScreenGui
@@ -39,12 +38,11 @@ FloatBtn.ZIndex = 30
 
 local UICorner = Instance.new("UICorner", FloatBtn)
 UICorner.CornerRadius = UDim.new(0, 16)
-
 local UIStroke = Instance.new("UIStroke", FloatBtn)
 UIStroke.Color = Color3.fromRGB(0, 229, 255)
 UIStroke.Thickness = 1.5
 
--- Logic kéo thả
+-- Kéo thả nút
 local dragging, moved, startInput, startPos = false, false, nil, nil
 FloatBtn.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -54,7 +52,6 @@ FloatBtn.InputBegan:Connect(function(input)
         startPos = FloatBtn.Position
     end
 end)
-
 UserInputService.InputChanged:Connect(function(input)
     if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local delta = input.Position - startInput
@@ -67,75 +64,78 @@ UserInputService.InputChanged:Connect(function(input)
         end
     end
 end)
-
 UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         dragging = false
     end
 end)
 
--- Biến lưu trữ trạng thái FE Invisible
 local isGhostActive = false
 local RealChar, FakeChar = nil, nil
 local loopConn = nil
-local highlightObj = nil
+
+-- Hàm xóa sạch clone cũ để fix lỗi tạo nhiều bản sao
+local function cleanOldClones()
+    for _, v in ipairs(Workspace:GetChildren()) do
+        if v.Name == "FE_GhostClone_" .. LocalPlayer.Name then
+            v:Destroy()
+        end
+    end
+end
 
 local function activateFEInvisible()
     if isGhostActive or not LocalPlayer.Character then return end
     isGhostActive = true
     
+    cleanOldClones() 
+    
     RealChar = LocalPlayer.Character
     RealChar.Archivable = true
     
-    -- Tạo nhân vật giả (Clone) để máy chủ nhìn thấy
     FakeChar = RealChar:Clone()
+    FakeChar.Name = "FE_GhostClone_" .. LocalPlayer.Name
     FakeChar.Parent = Workspace
     
-    -- Xóa các script thừa trong FakeChar để không bị lỗi
+    -- Xóa script thừa trong bản clone
     for _, v in ipairs(FakeChar:GetDescendants()) do
         if v:IsA("LocalScript") or v:IsA("Script") then
             v:Destroy()
         end
     end
-    
-    -- Chuyển quyền điều khiển sang nhân vật giả
+
+    -- Chuyển quyền điều khiển và gỡ kẹt Camera
     LocalPlayer.Character = FakeChar
-    Workspace.CurrentCamera.CameraSubject = FakeChar:FindFirstChild("Humanoid")
-    
-    -- Làm trong suốt nhân vật thật (RealChar) nhưng giữ lại Hitbox (HumanoidRootPart)
-    for _, v in ipairs(RealChar:GetDescendants()) do
-        if v:IsA("BasePart") or v:IsA("Decal") or v:IsA("Texture") then
-            if v.Name ~= "HumanoidRootPart" then
-                v.Transparency = 1
-                v.CanCollide = false
-            end
+    task.delay(0.1, function()
+        if Workspace.CurrentCamera then
+            Workspace.CurrentCamera.CameraSubject = FakeChar:FindFirstChild("Humanoid")
         end
-    end
+    end)
     
-    -- Tạo Highlight quanh nhân vật giả để bạn dễ nhìn
-    highlightObj = Instance.new("Highlight")
-    highlightObj.Name = "GhostHighlight"
-    highlightObj.Adornee = FakeChar
-    highlightObj.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    highlightObj.FillColor = Color3.fromRGB(0, 229, 255)
-    highlightObj.OutlineColor = Color3.fromRGB(170, 80, 255)
-    highlightObj.FillTransparency = 0.6
-    highlightObj.OutlineTransparency = 0
-    highlightObj.Parent = FakeChar
-    
-    -- Đồng bộ vị trí Hitbox (RealChar) đi theo FakeChar để bạn đánh được người khác
     loopConn = RunService.Heartbeat:Connect(function()
         if RealChar and FakeChar and RealChar:FindFirstChild("HumanoidRootPart") and FakeChar:FindFirstChild("HumanoidRootPart") then
-            -- Giữ Hitbox tàng hình luôn nằm ngay vị trí bạn điều khiển
+            -- Kéo hitbox thật theo bản sao
             RealChar.HumanoidRootPart.CFrame = FakeChar.HumanoidRootPart.CFrame
             RealChar.HumanoidRootPart.Velocity = Vector3.zero
+            
+            -- Đưa vào vòng lặp để liên tục ẩn các hiệu ứng, khối màu đen/vàng mới sinh ra
+            for _, v in ipairs(RealChar:GetDescendants()) do
+                if v:IsA("BasePart") or v:IsA("Decal") or v:IsA("Texture") then
+                    if v.Name ~= "HumanoidRootPart" then
+                        v.Transparency = 1
+                        v.CanCollide = false
+                    end
+                end
+            end
+            
+            -- Liên tục ép camera theo Clone nếu bị game giành lại
+            if Workspace.CurrentCamera.CameraSubject ~= FakeChar:FindFirstChild("Humanoid") then
+                Workspace.CurrentCamera.CameraSubject = FakeChar:FindFirstChild("Humanoid")
+            end
         else
-            -- Nếu một trong 2 bị chết, reset lại
             deactivateFEInvisible()
         end
     end)
     
-    -- Đổi màu nút để báo hiệu đang tàng hình
     UIStroke.Color = Color3.fromRGB(255, 70, 90)
     FloatBtn.TextColor3 = Color3.fromRGB(255, 70, 90)
 end
@@ -145,14 +145,16 @@ function deactivateFEInvisible()
     isGhostActive = false
     
     if loopConn then loopConn:Disconnect() end
-    if highlightObj then highlightObj:Destroy() end
     
-    -- Đưa người chơi về lại nhân vật thật và xóa nhân vật giả
     if RealChar and RealChar.Parent then
         LocalPlayer.Character = RealChar
-        Workspace.CurrentCamera.CameraSubject = RealChar:FindFirstChild("Humanoid")
+        task.delay(0.1, function()
+            if Workspace.CurrentCamera then
+                Workspace.CurrentCamera.CameraSubject = RealChar:FindFirstChild("Humanoid")
+            end
+        end)
         
-        -- Hiện lại cơ thể
+        -- Khôi phục hiện hình
         for _, v in ipairs(RealChar:GetDescendants()) do
             if v:IsA("BasePart") or v:IsA("Decal") or v:IsA("Texture") then
                 if v.Name ~= "HumanoidRootPart" then
@@ -163,14 +165,12 @@ function deactivateFEInvisible()
         end
     end
     
-    if FakeChar then FakeChar:Destroy() end
+    cleanOldClones()
     
-    -- Phục hồi màu nút
     UIStroke.Color = Color3.fromRGB(0, 229, 255)
     FloatBtn.TextColor3 = Color3.fromRGB(0, 229, 255)
 end
 
--- Nhấn vào nút nổi
 FloatBtn.Activated:Connect(function()
     if not moved then
         if isGhostActive then
@@ -181,7 +181,6 @@ FloatBtn.Activated:Connect(function()
     end
 end)
 
--- Khi chết tự reset lại script
 LocalPlayer.CharacterAdded:Connect(function()
     if isGhostActive then
         deactivateFEInvisible()
